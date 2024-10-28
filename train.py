@@ -34,14 +34,40 @@ from utils.loss import ComputeLoss, ComputeLossOTA
 from utils.plots import plot_images, plot_labels, plot_results, plot_evolution
 from utils.torch_utils import ModelEMA, select_device, intersect_dicts, torch_distributed_zero_first, is_parallel
 from utils.wandb_logging.wandb_utils import WandbLogger, check_wandb_resume
+import csv
+import os
 
 logger = logging.getLogger(__name__)
 
+# Function to initialize or update the CSV file with training metrics
+def log_metrics_to_csv(csv_path, epoch, results, mloss):
+    # Check if the CSV file exists. If not, create it and add headers.
+    if not os.path.exists(csv_path):
+        with open(csv_path, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "epoch", "precision", "recall", "mAP_0.5", "mAP_0.5:0.95",
+                "train_box_loss", "train_obj_loss", "train_cls_loss",
+                "val_box_loss", "val_obj_loss", "val_cls_loss"
+            ])
+
+    # Log epoch metrics to CSV
+    with open(csv_path, mode='a', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow([
+            epoch,
+            results[0], results[1], results[2], results[3],  # precision, recall, mAP@0.5, mAP@0.5:0.95
+            mloss[0].item(), mloss[1].item(), mloss[2].item(),  # train box, obj, cls loss
+            results[4], results[5], results[6]  # val box, obj, cls loss
+        ])
 
 def train(hyp, opt, device, tb_writer=None):
     logger.info(colorstr('hyperparameters: ') + ', '.join(f'{k}={v}' for k, v in hyp.items()))
     save_dir, epochs, batch_size, total_batch_size, weights, rank, freeze = \
         Path(opt.save_dir), opt.epochs, opt.batch_size, opt.total_batch_size, opt.weights, opt.global_rank, opt.freeze
+
+    # Define the CSV file path where metrics will be saved
+    csv_path = os.path.join(str(save_dir), "training_metrics.csv")
 
     # Directories
     wdir = save_dir / 'weights'
@@ -386,6 +412,8 @@ def train(hyp, opt, device, tb_writer=None):
                 s = ('%10s' * 2 + '%10.4g' * 6) % (
                     '%g/%g' % (epoch, epochs - 1), mem, *mloss, targets.shape[0], imgs.shape[-1])
                 pbar.set_description(s)
+                # Update CSV log
+                log_metrics_to_csv(csv_path, epoch, results, mloss)
 
                 # Plot
                 if plots and ni < 10:
